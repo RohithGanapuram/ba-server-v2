@@ -203,7 +203,7 @@ requires-dist = [
     { name = "langchain-community", specifier = ">=0.3.27" },
     { name = "langchain-huggingface", specifier = ">=0.3.1" },
     { name = "markdown", specifier = ">=3.8.2" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.12.2" },
+    { name = "mcp", extras = ["cli", "server"], specifier = ">=1.12.2" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "pinecone", specifier = ">=7.3.0" },
     { name = "pypdf2", specifier = ">=3.0.1" },

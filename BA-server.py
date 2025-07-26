@@ -495,31 +495,8 @@ Apply these settings when generating Word documents, including proposals, summar
 """
 
 
-# if __name__ == "__main__" and "uvicorn" not in sys.modules:
-#     import logging
-#     logging.basicConfig(level=logging.DEBUG)
-#     mcp.run(transport="streamable-http")
-
 if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.DEBUG)
     mcp.run(transport="streamable-http")
-
-
-
-
-
-
-# if __name__ == "__main__":
-#     # Initialize and run the server
-#     import sys
-#     import logging
-
-#     # Set up logging for debugging
-#     logging.basicConfig(level=logging.DEBUG)
-
-#     try:
-#         mcp.run(transport='sse')
-#     except Exception as e:
-#         print(f"Server error: {e}", file=sys.stderr)
-#         sys.exit(1)
+    
