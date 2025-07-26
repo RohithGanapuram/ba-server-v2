@@ -52,7 +52,7 @@ def sanitize_filename(filename: str) -> str:
     return sanitized if sanitized else 'unnamed'
 
 # Create MCP server
-mcp = FastMCP("Broadaxis-Server", port = 8892)
+mcp = FastMCP("Broadaxis-Server", host="0.0.0.0",  port = 8892)
 
 
 @mcp.tool()
