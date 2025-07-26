@@ -52,7 +52,7 @@ def sanitize_filename(filename: str) -> str:
     return sanitized if sanitized else 'unnamed'
 
 # Create MCP server
-mcp = FastMCP("Broadaxis-Server")
+mcp = FastMCP("Broadaxis-Server", port = 8892)
 
 
 @mcp.tool()
@@ -498,5 +498,4 @@ Apply these settings when generating Word documents, including proposals, summar
 if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.DEBUG)
-    mcp.run(transport="streamable-http")
-    
+    mcp.run(transport="sse")
