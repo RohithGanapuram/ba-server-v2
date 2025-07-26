@@ -498,4 +498,4 @@ Apply these settings when generating Word documents, including proposals, summar
 if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.DEBUG)
-    mcp.run(transport="sse")
+    mcp.run(transport="streamable-http")

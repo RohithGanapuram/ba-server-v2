@@ -9,4 +9,4 @@ mkdir -p generated_files
 
 # Start the Streamlit application
 echo "Starting Streamlit application..."
-python run BA-server.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
+python BA-server.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
