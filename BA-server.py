@@ -102,26 +102,66 @@ def create_custom_rag_from_local_pdfs() -> str:
     """
     if not FILESYSTEM_PATH:
         return json.dumps({"status": "error", "message": "Filesystem path not set."})
+    
+    # Check if path exists
+    if not os.path.exists(FILESYSTEM_PATH):
+        return json.dumps({"status": "error", "message": f"Path does not exist: {FILESYSTEM_PATH}"})
+    
     try:
         processed = []
+        errors = []
+        
         for filename in os.listdir(FILESYSTEM_PATH):
             if filename.lower().endswith(".pdf"):
-                path = os.path.join(FILESYSTEM_PATH, filename)
-                text = extract_text_from_pdf(path)
-                chunks = text_splitter.split_text(text)
-                for i, chunk in enumerate(chunks):
-                    embedding = embedder.embed_documents([chunk])[0]
-                    metadata = {"source": filename, "text": chunk}
-                    unique_id = f"{filename}_chunk_{i}"
-                    index.upsert([(unique_id, embedding, metadata)])
-                processed.append(filename)
-        return json.dumps({
-            "status": "success",
+                try:
+                    path = os.path.normpath(os.path.join(FILESYSTEM_PATH, filename))
+                    
+                    # Check file accessibility
+                    if not os.path.isfile(path):
+                        errors.append(f"File not accessible: {filename}")
+                        continue
+                    
+                    text = extract_text_from_pdf(path)
+                    
+                    # Handle empty PDFs
+                    if not text.strip():
+                        errors.append(f"No text extracted from: {filename}")
+                        continue
+                    
+                    chunks = text_splitter.split_text(text)
+                    
+                    for i, chunk in enumerate(chunks):
+                        if chunk.strip():  # Skip empty chunks
+                            embedding = embedder.embed_documents([chunk])[0]
+                            metadata = {
+                                "source": filename, 
+                                "text": chunk,
+                                "chunk_index": i,
+                                "total_chunks": len(chunks)
+                            }
+                            unique_id = f"{filename}_chunk_{i}"
+                            index.upsert([(unique_id, embedding, metadata)])
+                    
+                    processed.append(filename)
+                    
+                except Exception as file_error:
+                    errors.append(f"Error processing {filename}: {str(file_error)}")
+        
+        result = {
+            "status": "success" if processed else "partial_success",
             "processed_pdfs": processed,
-            "message": f"Indexed {len(processed)} PDFs."
-        })
+            "message": f"Indexed {len(processed)} PDFs successfully.",
+            "total_files_found": len([f for f in os.listdir(FILESYSTEM_PATH) if f.lower().endswith(".pdf")])
+        }
+        
+        if errors:
+            result["errors"] = errors
+            result["error_count"] = len(errors)
+        
+        return json.dumps(result)
+        
     except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)})
+        return json.dumps({"status": "error", "error": f"General error: {str(e)}"})
 
 
 @mcp.tool()
@@ -302,15 +342,12 @@ def Step1_Identifying_documents():
     """read PDFs from filesystem path, categorize them as RFP/RFI/RFQ-related, fillable forms, or non-fillable documents."""
     return f"""
 You are BroadAxis-AI, an intelligent assistant designed to analyze procurement documents and assist with document classification.
-
 As the **first step**, review the files from the provided `filesystem_path` and use PDF processing tools to categorize each uploaded PDF into the following groups:
 
 1. 📘 **Primary Documents** — PDFs that contain RFP, RFQ, or RFI content (e.g., project scope, requirements, evaluation criteria).
 2. 📝 **Fillable Forms** — PDFs with interactive fields intended for user input (e.g., pricing tables, response forms).
 3. 📄 **Non-Fillable Documents** — PDFs that are neither RFP-type nor interactive, such as attachments or informational appendices.
-
 ---
-
 Once the classification is complete:
 
 📊 **Would you like to proceed to the next step and generate summaries for the relevant documents?**  
@@ -321,7 +358,7 @@ If yes, please upload the files and attach the summary prompt template.
 def Step2_summarize_documents():
     """Generate a structured summary of uploaded RFP, RFQ, or RFI documents."""
     return f"""You are BroadAxis-AI, a professional assistant trained to analyze and summarize procurement documents such as RFPs (Request for Proposals), RFQs (Request for Quotations), and RFIs (Request for Information).
-Your task is to review the uploaded document(s) and provide a **structured, factual summary** using only the information found in each file. **Do not infer, assume, or hallucinate any content.**
+Your task is to review the uploaded document(s) and provide a **structured, factual summary for each document** using only the information found in each file. **Do not infer, assume, or hallucinate any content.**
 For each document, present the following sections clearly and professionally: 
 if you dont find the sections below, just include the summary with key details you find, and generate a general summary, the whole point is for the user to understand the what the document is abut. 
 ---
