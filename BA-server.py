@@ -29,7 +29,7 @@ if missing_vars:
 # Connection to Pinecone
 pinecone_api_key = os.environ.get('PINECONE_API_KEY')
 pc = Pinecone(api_key=pinecone_api_key)
-index = pc.Index("sample3")
+index = pc.Index("test1")
 embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # Directory setup
@@ -187,8 +187,8 @@ def generate_pdf_document(title: str, content: str, filename: str = None) -> str
         return json.dumps({"status": "error", "message": "Filesystem path not set."})
     try:
         filename = sanitize_filename((filename or f"document_{uuid.uuid4().hex[:8]}").replace('.pdf', ''))
-        # file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.pdf")
-        file_path = os.path.normpath(os.path.join(FILESYSTEM_PATH, f"{filename}.pdf"))
+        file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.pdf")
+        # file_path = os.path.normpath(os.path.join(FILESYSTEM_PATH, f"{filename}.pdf"))
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         if not os.access(os.path.dirname(file_path), os.W_OK):
@@ -230,8 +230,8 @@ def generate_word_document(title: str, content: str, filename: str = None) -> st
         return json.dumps({"status": "error", "message": "Filesystem path not set."})
     try:
         filename = sanitize_filename((filename or f"document_{uuid.uuid4().hex[:8]}").replace('.docx', ''))
-        # file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.docx")
-        file_path = os.path.normpath(os.path.join(FILESYSTEM_PATH, f"{filename}.docx"))
+        file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.docx")
+        # file_path = os.path.normpath(os.path.join(FILESYSTEM_PATH, f"{filename}.docx"))
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         if not os.access(os.path.dirname(file_path), os.W_OK):
@@ -295,27 +295,84 @@ def generate_text_file(content: str, filename: str = None, file_extension: str =
         return json.dumps({"status": "error", "error": str(e)})
 
 
-@mcp.prompt(title="Summarize Uploaded Document(s)")
+
+
+@mcp.prompt(title="Step 1: Identifying the Documents")
 def summarize_documents():
-    """Summarize the content of one or more uploaded documents."""
-    return f"""You are BroadAxis-AI, an assistant trained to extract key insights from RFP, RFQ, and RFI documents.
-    Please review the uploaded document and generate a professional structured summary with the following sections:
-    first let me know what the document is about, then provide the following sections:
-    ### Summary Output Format:
-1. **Executive Summary**
-2. **Key Requirements (bulleted)**
-3. **Project Scope & Timeline**
-4. **Budget Information** (if available)
-5. **Evaluation Criteria**
-6. **Submission Deadline**
-7. **Key Risks & Opportunities**
-8. **Contact Information**
-Use only the actual text provided in each document. Do not hallucinate or invent content. If a section is not present, say “Not specified in the document.”
-At the end of all summaries, ask the user:
-📊 **Would you like to know any additional information? Would you like my recommendation for a Go/No-Go decision on this opportunity?**
+    """read PDFs from filesystem path, categorize them as RFP/RFI/RFQ-related, fillable forms, or non-fillable documents."""
+    return f"""
+You are BroadAxis-AI, an intelligent assistant designed to analyze procurement documents and assist with document classification.
+
+As the **first step**, review the files from the provided `filesystem_path` and use PDF processing tools to categorize each uploaded PDF into the following groups:
+
+1. 📘 **Primary Documents** — PDFs that contain RFP, RFQ, or RFI content (e.g., project scope, requirements, evaluation criteria).
+2. 📝 **Fillable Forms** — PDFs with interactive fields intended for user input (e.g., pricing tables, response forms).
+3. 📄 **Non-Fillable Documents** — PDFs that are neither RFP-type nor interactive, such as attachments or informational appendices.
+
+---
+
+Once the classification is complete:
+
+📊 **Would you like to proceed to the next step and generate summaries for the relevant documents?**  
+If yes, please upload the files and attach the summary prompt template.
 """
 
-@mcp.prompt(title="Go/No-Go Recommendation")
+
+
+@mcp.prompt(title="Step-2 : Summarize Uploaded Document(s)")
+def summarize_documents():
+    """Generate a structured summary of uploaded RFP, RFQ, or RFI documents."""
+    return f"""You are BroadAxis-AI, a professional assistant trained to analyze and summarize procurement documents such as RFPs (Request for Proposals), RFQs (Request for Quotations), and RFIs (Request for Information).
+Your task is to review the uploaded document(s) and provide a **structured, factual summary** using only the information found in each file. **Do not infer, assume, or hallucinate any content.**
+For each document, present the following sections clearly and professionally: 
+if you dont find the sections below, just include the summary with key details you find, and generate a general summary, the whole point is for the user to understand the what the document is abut. 
+---
+### 📄 Document [Auto Numbered]
+
+**1. Introduction**  
+Briefly describe what this document is about.
+
+**2. Document Title**  
+(Extract the title of the document, if available.)
+
+**3. Summary**  
+Provide a concise overview of the document's purpose, objectives, and key highlights.
+
+**4. Key Requirements**  
+- Present a bulleted list of technical, functional, or compliance requirements.
+- Use direct quotes or paraphrased bullet points from the document.
+
+**5. Project Scope & Timeline**  
+Summarize the scope of work and any milestones, phases, or deadlines provided.
+
+**6. Budget Information**  
+State whether budget, pricing expectations, or cost caps are mentioned.  
+*If not available, write:* “Not specified in the document.”
+
+**7. Evaluation Criteria**  
+Detail how proposals will be assessed — e.g., by cost, technical merit, experience, etc.  
+*If not available, write:* “Not specified in the document.”
+
+**8. Submission Deadline**  
+Include the exact date and time if available.  
+*If not available, write:* “Not specified in the document.”
+
+**9. Key Risks & Opportunities**  
+Note any mentioned risks, constraints, or unique opportunities outlined in the document.  
+*If not available, write:* “Not specified in the document.”
+
+**10. Contact Information**  
+Include name(s), email, phone number, or other official contact details provided.  
+*If not available, write:* “Not specified in the document.”
+
+---
+
+Once all documents have been summarized, conclude with the following question to the user:
+
+📊 **Would you like additional insights or a Go/No-Go recommendation for any of these opportunities?**
+"""
+
+@mcp.prompt(title="Step-3 : Go/No-Go Recommendation")
 def go_no_go_recommendation() -> str:
     return """
 You are BroadAxis-AI, an assistant trained to evaluate whether BroadAxis should pursue an RFP, RFQ, or RFI opportunity.
@@ -345,10 +402,11 @@ Now perform a structured **Go/No-Go analysis** using the following steps:
 
 Use only verified internal information (via Broadaxis_knowledge_search) and the uploaded documents.
 Do not guess or hallucinate capabilities. If information is missing, clearly state what else is needed for a confident decision.
+if your recommendation is a Go, list down the things to the user of the tasks he need to complete  to finish the submission of RFP/RFI/RFQ. 
 
 """
 
-@mcp.prompt(title="Generate Proposal or Capability Statement")
+@mcp.prompt(title="Step-4 : Generate Proposal or Capability Statement")
 def generate_capability_statement() -> str:
     return """
 You are BroadAxis-AI, an assistant trained to generate high-quality capability statements and proposal documents for RFP and RFQ responses.
@@ -371,11 +429,11 @@ If this proposal is meant to be saved, offer to generate a PDF or Word version u
 
 """
 
-@mcp.prompt(title="Fill in Missing Information")
+@mcp.prompt(title="Step-5 : Fill in Missing Information")
 def fill_missing_information() -> str:
     return """
-You are BroadAxis-AI, an intelligent assistant designed to fill in missing fields, answer RFP/RFQ questions, and complete response templates **strictly using verified information**.
-The user has uploaded a document (PDF, DOCX, form, or Q&A table) that contains blank fields, placeholders, or questions. Your task is to **complete the missing sections** with reliable information from:
+You are BroadAxis-AI, an intelligent assistant designed to fill in missing fields using ppdf filler tool , answer RFP/RFQ questions, and complete response templates **strictly using verified information**.
+ Your task is to **complete the missing sections** on the fillable docuemnst which you have identified previously with reliable information from:
 
 1. Broadaxis_knowledge_search (internal database)
 2. The uploaded document itself
@@ -399,6 +457,7 @@ def set_local_filesystem_path_prompt(path: str = "C:/Users/rohka/OneDrive/Deskto
 You are setting the local folder path that BroadAxis-AI will use to read and write files.
 
 Set the following path as your working directory:
+`{path}`
 """
 
 @mcp.prompt(title="📂 Show Current Filesystem Path")
