@@ -297,8 +297,8 @@ def generate_text_file(content: str, filename: str = None, file_extension: str =
 
 
 
-@mcp.prompt(title="Step 1: Identifying the Documents")
-def summarize_documents():
+@mcp.prompt(title="Identifying the Documents")
+def Step1_Identifying_documents():
     """read PDFs from filesystem path, categorize them as RFP/RFI/RFQ-related, fillable forms, or non-fillable documents."""
     return f"""
 You are BroadAxis-AI, an intelligent assistant designed to analyze procurement documents and assist with document classification.
@@ -317,10 +317,8 @@ Once the classification is complete:
 If yes, please upload the files and attach the summary prompt template.
 """
 
-
-
 @mcp.prompt(title="Step-2 : Summarize Uploaded Document(s)")
-def summarize_documents():
+def Step2_summarize_documents():
     """Generate a structured summary of uploaded RFP, RFQ, or RFI documents."""
     return f"""You are BroadAxis-AI, a professional assistant trained to analyze and summarize procurement documents such as RFPs (Request for Proposals), RFQs (Request for Quotations), and RFIs (Request for Information).
 Your task is to review the uploaded document(s) and provide a **structured, factual summary** using only the information found in each file. **Do not infer, assume, or hallucinate any content.**
@@ -373,7 +371,7 @@ Once all documents have been summarized, conclude with the following question to
 """
 
 @mcp.prompt(title="Step-3 : Go/No-Go Recommendation")
-def go_no_go_recommendation() -> str:
+def Step3_go_no_go_recommendation() -> str:
     return """
 You are BroadAxis-AI, an assistant trained to evaluate whether BroadAxis should pursue an RFP, RFQ, or RFI opportunity.
 The user has uploaded one or more opportunity documents. You have already summarized them/if not ask for the user to upload RFP/RFI/RF documents and generate summary.
@@ -407,7 +405,7 @@ if your recommendation is a Go, list down the things to the user of the tasks he
 """
 
 @mcp.prompt(title="Step-4 : Generate Proposal or Capability Statement")
-def generate_capability_statement() -> str:
+def Step4_generate_capability_statement() -> str:
     return """
 You are BroadAxis-AI, an assistant trained to generate high-quality capability statements and proposal documents for RFP and RFQ responses.
 The user has either uploaded an opportunity document or requested a formal proposal. Use all available information from:
@@ -430,7 +428,7 @@ If this proposal is meant to be saved, offer to generate a PDF or Word version u
 """
 
 @mcp.prompt(title="Step-5 : Fill in Missing Information")
-def fill_missing_information() -> str:
+def Step5_fill_missing_information() -> str:
     return """
 You are BroadAxis-AI, an intelligent assistant designed to fill in missing fields using ppdf filler tool , answer RFP/RFQ questions, and complete response templates **strictly using verified information**.
  Your task is to **complete the missing sections** on the fillable docuemnst which you have identified previously with reliable information from:
