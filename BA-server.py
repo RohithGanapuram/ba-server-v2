@@ -79,12 +79,7 @@ def set_filesystem_path(path: str) -> str:
     import os
     global FILESYSTEM_PATH
 
-    if not os.path.isdir(path):
-        return json.dumps({
-            "status": "error",
-            "message": f"The path '{path}' is not a valid directory."
-        })
-
+    global FILESYSTEM_PATH
     FILESYSTEM_PATH = path
     return json.dumps({
         "status": "success",
