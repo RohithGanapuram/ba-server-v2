@@ -187,7 +187,12 @@ def generate_pdf_document(title: str, content: str, filename: str = None) -> str
         return json.dumps({"status": "error", "message": "Filesystem path not set."})
     try:
         filename = sanitize_filename((filename or f"document_{uuid.uuid4().hex[:8]}").replace('.pdf', ''))
-        file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.pdf")
+        # file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.pdf")
+        file_path = os.path.normpath(os.path.join(FILESYSTEM_PATH, f"{filename}.pdf"))
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        if not os.access(os.path.dirname(file_path), os.W_OK):
+            return json.dumps({"status": "error", "error": f"No write permission to {os.path.dirname(file_path)}"})
         doc = SimpleDocTemplate(file_path, pagesize=letter)
         styles = getSampleStyleSheet()
         story = [Paragraph(title, ParagraphStyle('Title', parent=styles['Heading1'], fontSize=18, alignment=1))]
@@ -225,7 +230,12 @@ def generate_word_document(title: str, content: str, filename: str = None) -> st
         return json.dumps({"status": "error", "message": "Filesystem path not set."})
     try:
         filename = sanitize_filename((filename or f"document_{uuid.uuid4().hex[:8]}").replace('.docx', ''))
-        file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.docx")
+        # file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.docx")
+        file_path = os.path.normpath(os.path.join(FILESYSTEM_PATH, f"{filename}.docx"))
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        if not os.access(os.path.dirname(file_path), os.W_OK):
+            return json.dumps({"status": "error", "error": f"No write permission to {os.path.dirname(file_path)}"})
         doc = Document()
         title_paragraph = doc.add_heading(title, level=1)
         title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
