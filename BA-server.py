@@ -1,19 +1,18 @@
-# BroadAxis MCP Server
 from mcp.server.fastmcp import FastMCP
 import json
 import os
 import sys
+import uuid
+import datetime
+from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
 from pinecone import Pinecone
 from tavily import TavilyClient
-from dotenv import load_dotenv
-
-# File generation imports
+from PyPDF2 import PdfReader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-import uuid
-import datetime
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
@@ -34,11 +33,14 @@ index = pc.Index("sample3")
 embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # Directory setup
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-GENERATED_FILES_DIR = os.path.join(BASE_DIR, "generated_files")
+FILESYSTEM_PATH = None
 
-# Ensure generated files directory exists
-os.makedirs(GENERATED_FILES_DIR, exist_ok=True)
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,
+    chunk_overlap=200,
+    separators=["\n\n", ".", " ", ""]
+)
+
 
 # Utility functions
 def sanitize_filename(filename: str) -> str:
@@ -51,8 +53,80 @@ def sanitize_filename(filename: str) -> str:
     # Ensure filename is not empty
     return sanitized if sanitized else 'unnamed'
 
+
+
+def extract_text_from_pdf(pdf_path: str) -> str:
+    reader = PdfReader(pdf_path)
+    text = ""
+    for page in reader.pages:
+        if page.extract_text():
+            text += page.extract_text()
+    return text
+
+def extract_text_from_pdf(pdf_path: str) -> str:
+    reader = PdfReader(pdf_path)
+    return "".join(page.extract_text() or "" for page in reader.pages)
+
 # Create MCP server
-mcp = FastMCP("Broadaxis-Server", host="0.0.0.0",  port = 8892)
+mcp = FastMCP("Broadaxis-Server" , host="0.0.0.0",  port = 8892)
+
+@mcp.tool()
+def set_filesystem_path(path: str) -> str:
+    """
+    Sets the base filesystem path for file tools (e.g., PDF generation, RAG ingestion).
+    Should be called once from Claude Desktop with the local path the assistant can access.
+    """
+    import os
+    global FILESYSTEM_PATH
+
+    if not os.path.isdir(path):
+        return json.dumps({
+            "status": "error",
+            "message": f"The path '{path}' is not a valid directory."
+        })
+
+    FILESYSTEM_PATH = path
+    return json.dumps({
+        "status": "success",
+        "message": f"Filesystem path set to: {FILESYSTEM_PATH}"
+    })
+
+
+@mcp.tool()
+def get_current_filesystem_path() -> str:
+    return json.dumps({
+        "filesystem_path": FILESYSTEM_PATH or "Not set"
+    })
+
+
+@mcp.tool()
+def create_custom_rag_from_local_pdfs() -> str:
+    """
+    Scans the local Claude-accessible folder for PDF files,
+    extracts content, chunks, embeds, and upserts to Pinecone.
+    """
+    if not FILESYSTEM_PATH:
+        return json.dumps({"status": "error", "message": "Filesystem path not set."})
+    try:
+        processed = []
+        for filename in os.listdir(FILESYSTEM_PATH):
+            if filename.lower().endswith(".pdf"):
+                path = os.path.join(FILESYSTEM_PATH, filename)
+                text = extract_text_from_pdf(path)
+                chunks = text_splitter.split_text(text)
+                for i, chunk in enumerate(chunks):
+                    embedding = embedder.embed_documents([chunk])[0]
+                    metadata = {"source": filename, "text": chunk}
+                    unique_id = f"{filename}_chunk_{i}"
+                    index.upsert([(unique_id, embedding, metadata)])
+                processed.append(filename)
+        return json.dumps({
+            "status": "success",
+            "processed_pdfs": processed,
+            "message": f"Indexed {len(processed)} PDFs."
+        })
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
 
 
 @mcp.tool()
@@ -113,121 +187,55 @@ def web_search_tool(query: str):
     
 @mcp.tool()
 def generate_pdf_document(title: str, content: str, filename: str = None) -> str:
-    """
-    Generate a PDF document with the provided title and content.
-
-    Args:
-        title: The title of the document
-        content: The main content of the document (supports markdown formatting)
-        filename: Optional custom filename (without extension)
-
-    Returns:
-        JSON string with file information including download path
-    """
+    """Generate a PDF document and save it in Claude's filesystem folder."""
+    if not FILESYSTEM_PATH:
+        return json.dumps({"status": "error", "message": "Filesystem path not set."})
     try:
-        # Generate unique filename if not provided
-        if not filename:
-            filename = f"document_{uuid.uuid4().hex[:8]}"
-
-        # Sanitize and ensure filename doesn't have extension
-        filename = sanitize_filename(filename.replace('.pdf', ''))
-
-        # Create full file path
-        file_path = os.path.join(GENERATED_FILES_DIR, f"{filename}.pdf")
-
-        # Create PDF document
+        filename = sanitize_filename((filename or f"document_{uuid.uuid4().hex[:8]}").replace('.pdf', ''))
+        file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.pdf")
         doc = SimpleDocTemplate(file_path, pagesize=letter)
         styles = getSampleStyleSheet()
-        story = []
-
-        # Add title
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=18,
-            spaceAfter=30,
-            alignment=1  # Center alignment
-        )
-        story.append(Paragraph(title, title_style))
+        story = [Paragraph(title, ParagraphStyle('Title', parent=styles['Heading1'], fontSize=18, alignment=1))]
         story.append(Spacer(1, 20))
-
-        # Process content (convert markdown to HTML-like formatting for reportlab)
-        content_lines = content.split('\n')
-        for line in content_lines:
+        for line in content.split('\n'):
             if line.strip():
-                # Handle basic markdown formatting
                 if line.startswith('# '):
                     story.append(Paragraph(line[2:], styles['Heading1']))
                 elif line.startswith('## '):
                     story.append(Paragraph(line[3:], styles['Heading2']))
                 elif line.startswith('### '):
                     story.append(Paragraph(line[4:], styles['Heading3']))
-                elif line.startswith('- ') or line.startswith('* '):
-                    story.append(Paragraph(f"• {line[2:]}", styles['Normal']))
+                elif line.startswith(('- ', '* ')):
+                    story.append(Paragraph("• " + line[2:], styles['Normal']))
                 else:
                     story.append(Paragraph(line, styles['Normal']))
                 story.append(Spacer(1, 6))
-
-        # Build PDF
         doc.build(story)
-
-        # Get file info
-        file_size = os.path.getsize(file_path)
-
         return json.dumps({
             "status": "success",
             "filename": f"{filename}.pdf",
             "file_path": file_path,
-            "file_size": file_size,
+            "file_size": os.path.getsize(file_path),
             "download_url": f"/download/{filename}.pdf",
             "created_at": datetime.datetime.now().isoformat(),
             "type": "pdf"
         })
-
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "error": str(e)
-        })
-
+        return json.dumps({"status": "error", "error": str(e)})
 
 @mcp.tool()
 def generate_word_document(title: str, content: str, filename: str = None) -> str:
-    """
-    Generate a Word document with the provided title and content.
-
-    Args:
-        title: The title of the document
-        content: The main content of the document (supports basic markdown formatting)
-        filename: Optional custom filename (without extension)
-
-    Returns:
-        JSON string with file information including download path
-    """
+    """Generate a Word document and save it in Claude's filesystem folder."""
+    if not FILESYSTEM_PATH:
+        return json.dumps({"status": "error", "message": "Filesystem path not set."})
     try:
-        # Generate unique filename if not provided
-        if not filename:
-            filename = f"document_{uuid.uuid4().hex[:8]}"
-
-        # Sanitize and ensure filename doesn't have extension
-        filename = sanitize_filename(filename.replace('.docx', '').replace('.doc', ''))
-
-        # Create full file path
-        file_path = os.path.join(GENERATED_FILES_DIR, f"{filename}.docx")
-
-        # Create Word document
+        filename = sanitize_filename((filename or f"document_{uuid.uuid4().hex[:8]}").replace('.docx', ''))
+        file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.docx")
         doc = Document()
-
-        # Add title
         title_paragraph = doc.add_heading(title, level=1)
         title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-        # Add some space after title
         doc.add_paragraph()
-
-        # Process content (handle basic markdown formatting)
-        content_lines = content.split('\n')
-        for line in content_lines:
+        for line in content.split('\n'):
             line = line.strip()
             if line:
                 if line.startswith('# '):
@@ -236,129 +244,51 @@ def generate_word_document(title: str, content: str, filename: str = None) -> st
                     doc.add_heading(line[3:], level=2)
                 elif line.startswith('### '):
                     doc.add_heading(line[4:], level=3)
-                elif line.startswith('- ') or line.startswith('* '):
-                    # Add bullet point
+                elif line.startswith(('- ', '* ')):
                     doc.add_paragraph(line[2:], style='List Bullet')
-                elif any(line.startswith(f'{i}. ') for i in range(1, 100)):
-                    # Add numbered list (supports 1-99)
-                    # Find the position after the number and dot
-                    dot_pos = line.find('. ')
-                    if dot_pos != -1:
-                        doc.add_paragraph(line[dot_pos + 2:], style='List Number')
+                elif any(line.startswith(f"{i}. ") for i in range(1, 100)):
+                    doc.add_paragraph(line[line.find('. ') + 2:], style='List Number')
                 else:
-                    # Regular paragraph
                     doc.add_paragraph(line)
             else:
-                # Add empty paragraph for spacing
                 doc.add_paragraph()
-
-        # Save document
         doc.save(file_path)
-
-        # Get file info
-        file_size = os.path.getsize(file_path)
-
         return json.dumps({
             "status": "success",
             "filename": f"{filename}.docx",
             "file_path": file_path,
-            "file_size": file_size,
+            "file_size": os.path.getsize(file_path),
             "download_url": f"/download/{filename}.docx",
             "created_at": datetime.datetime.now().isoformat(),
             "type": "docx"
         })
-
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "error": str(e)
-        })
+        return json.dumps({"status": "error", "error": str(e)})
+
 
 
 @mcp.tool()
 def generate_text_file(content: str, filename: str = None, file_extension: str = "txt") -> str:
-    """
-    Generate a text file with the provided content.
-
-    Args:
-        content: The content to write to the file
-        filename: Optional custom filename (without extension)
-        file_extension: File extension (txt, md, csv, json, etc.)
-
-    Returns:
-        JSON string with file information including download path
-    """
+    """Generate a text-based file (txt, md, csv, json, etc.) and save it in Claude's folder."""
+    if not FILESYSTEM_PATH:
+        return json.dumps({"status": "error", "message": "Filesystem path not set."})
     try:
-        # Generate unique filename if not provided
-        if not filename:
-            filename = f"file_{uuid.uuid4().hex[:8]}"
-
-        # Sanitize filename and ensure no extension
-        filename = sanitize_filename(filename.split('.')[0])
-
-        # Create full file path
-        file_path = os.path.join(GENERATED_FILES_DIR, f"{filename}.{file_extension}")
-
-        # Write content to file
+        filename = sanitize_filename((filename or f"file_{uuid.uuid4().hex[:8]}").split('.')[0])
+        file_path = os.path.join(FILESYSTEM_PATH, f"{filename}.{file_extension}")
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
-
-        # Get file info
-        file_size = os.path.getsize(file_path)
-
         return json.dumps({
             "status": "success",
             "filename": f"{filename}.{file_extension}",
             "file_path": file_path,
-            "file_size": file_size,
+            "file_size": os.path.getsize(file_path),
             "download_url": f"/download/{filename}.{file_extension}",
             "created_at": datetime.datetime.now().isoformat(),
             "type": file_extension
         })
-
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "error": str(e)
-        })
+        return json.dumps({"status": "error", "error": str(e)})
 
-
-@mcp.tool()
-def list_generated_files() -> str:
-    """
-    List all generated files available for download.
-
-    Returns:
-        JSON string with list of available files
-    """
-    try:
-        files = []
-        if os.path.exists(GENERATED_FILES_DIR):
-            for filename in os.listdir(GENERATED_FILES_DIR):
-                file_path = os.path.join(GENERATED_FILES_DIR, filename)
-                if os.path.isfile(file_path):
-                    file_size = os.path.getsize(file_path)
-                    file_modified = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
-
-                    files.append({
-                        "filename": filename,
-                        "file_size": file_size,
-                        "download_url": f"/download/{filename}",
-                        "modified_at": file_modified.isoformat(),
-                        "type": filename.split('.')[-1] if '.' in filename else "unknown"
-                    })
-
-        return json.dumps({
-            "status": "success",
-            "files": files,
-            "count": len(files)
-        })
-
-    except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "error": str(e)
-        })
 
 @mcp.prompt(title="Summarize Uploaded Document(s)")
 def summarize_documents():
@@ -384,7 +314,7 @@ At the end of all summaries, ask the user:
 def go_no_go_recommendation() -> str:
     return """
 You are BroadAxis-AI, an assistant trained to evaluate whether BroadAxis should pursue an RFP, RFQ, or RFI opportunity.
-The user has uploaded one or more opportunity documents. You have already summarized them.
+The user has uploaded one or more opportunity documents. You have already summarized them/if not ask for the user to upload RFP/RFI/RF documents and generate summary.
 Now perform a structured **Go/No-Go analysis** using the following steps:
 ---
 ### 🧠 Step-by-Step Evaluation Framework
@@ -442,9 +372,9 @@ def fill_missing_information() -> str:
 You are BroadAxis-AI, an intelligent assistant designed to fill in missing fields, answer RFP/RFQ questions, and complete response templates **strictly using verified information**.
 The user has uploaded a document (PDF, DOCX, form, or Q&A table) that contains blank fields, placeholders, or questions. Your task is to **complete the missing sections** with reliable information from:
 
-1. ✅ Broadaxis_knowledge_search (internal database)
-2. ✅ The uploaded document itself
-3. ✅ Prior chat context (if available)
+1. Broadaxis_knowledge_search (internal database)
+2. The uploaded document itself
+3. Prior chat context (if available)
 ---
 ### 🧠 RULES (Strict Compliance)
 
@@ -456,6 +386,30 @@ The user has uploaded a document (PDF, DOCX, form, or Q&A table) that contains b
 ### ✅ Final Instruction
 Only fill what you can verify using Broadaxis_knowledge_search and uploaded content. Leave everything else with clear, professional placeholders.
 
+"""
+
+@mcp.prompt(title="📁 Set Local Filesystem Path")
+def set_local_filesystem_path_prompt(path: str = "C:/Users/rohka/OneDrive/Desktop/test-mcp") -> str:
+    return f"""
+You are setting the local folder path that BroadAxis-AI will use to read and write files.
+
+Set the following path as your working directory:
+"""
+
+@mcp.prompt(title="📂 Show Current Filesystem Path")
+def show_current_filesystem_path_prompt() -> str:
+    return """
+You're checking the currently configured local folder path that BroadAxis-AI uses.
+
+Trigger the `get_current_filesystem_path()` tool to see the folder currently being used to store and retrieve files (PDFs, DOCXs, etc).
+"""
+
+@mcp.prompt(title="🔍 Create Custom RAG from Local PDF")
+def create_rag_from_pdf_prompt(pdf_file: str = "example.pdf") -> str:
+    return f"""
+You are creating a custom RAG dataset by extracting text from a local PDF file.
+
+Please ensure the PDF file named:
 """
 
 @mcp.prompt(title="Configure Word Document Formatting")
