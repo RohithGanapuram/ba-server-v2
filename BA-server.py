@@ -29,7 +29,7 @@ if missing_vars:
 # Connection to Pinecone
 pinecone_api_key = os.environ.get('PINECONE_API_KEY')
 pc = Pinecone(api_key=pinecone_api_key)
-index = pc.Index("test1")
+index = pc.Index("sample3")
 embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # Directory setup
