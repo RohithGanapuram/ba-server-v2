@@ -6,20 +6,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.59.0",
-    "arxiv>=2.2.0",
-    "asyncio>=3.4.3",
-    "fpdf>=1.7.2",
     "langchain-community>=0.3.27",
     "langchain-huggingface>=0.3.1",
-    "markdown>=3.8.2",
-    "mcp[cli,server]>=1.12.2",
-    "nest-asyncio>=1.6.0",
+    "mcp[cli]>=1.12.2",
     "pinecone>=7.3.0",
-    "pypdf2>=3.0.1",
-    "python-docx>=1.2.0",
-    "reportlab>=4.4.3",
     "sentence-transformers>=5.0.0",
-    "sync>=1.0.0",
-    "tavily-python>=0.7.10",
     "transformers>=4.53.3",
 ]
