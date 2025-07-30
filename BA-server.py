@@ -50,9 +50,7 @@ def Broadaxis_knowledge_search(query: str):
 @mcp.prompt(title="Identifying the Documents")
 def Step1_Identifying_documents():
     """read PDFs from filesystem path, categorize them as RFP/RFI/RFQ-related, fillable forms, or non-fillable documents."""
-    return f"""
-You are BroadAxis-AI, an intelligent assistant designed to analyze procurement documents and assist with document classification.
-As the **first step**, read the files from the provided filesystems tool path using PDFFiller tool to categorize each uploaded PDF into the following groups:
+    return f"""read the files from the provided filesystems tool path using PDFFiller tool to categorize each uploaded PDF into the following groups:
 
 1. 📘 **Primary Documents** — PDFs that contain RFP, RFQ, or RFI content (e.g., project scope, requirements, evaluation criteria).
 2. 📝 **Fillable Forms** — PDFs with interactive fields intended for user input (e.g., pricing tables, response forms).
@@ -64,29 +62,65 @@ Once the classification is complete:
 If yes, please upload the files and attach the summary prompt template.
 """
 
-@mcp.prompt(title="Step-2 : Summarize Uploaded Document(s)")
+@mcp.prompt(title="Step-2: Executive Summary of Procurement Document")
 def Step2_summarize_documents():
-    """Generate a structured summary of uploaded RFP, RFQ, or RFI documents."""
-    return f"""You are **BroadAxis-AI**, a professional assistant trained to analyze and summarize procurement documents, including RFPs (Requests for Proposals), RFQs (Requests for Quotations), and RFIs (Requests for Information).
-Your task is to review the uploaded document(s) primary documents which are listed above and generate a **structured, factual summary for each document**, presented **one at a time**, with the **document name as the heading**.
-Use the following key areas as reference points when extracting and organizing information, **only if they are present** in the document:
+    """Generate a clear, high-value summary of uploaded RFP, RFQ, or RFI documents for executive decision-making."""
+    return f"""
+You are **BroadAxis-AI**, an intelligent assistant that analyzes procurement documents (RFP, RFQ, RFI) to help vendor teams quickly understand the opportunity and make informed pursuit decisions.
+When a user uploads one or more documents, do the following **for each document, one at a time**:
 
-- **Key Requirements**
-- **Project Timeline**
-- **Budget or Estimated Value**
-- **Evaluation Criteria**
-- **Submission Deadline**
-- **Contact Information**
-- **Key Areas of Risk**
-- **Opportunities**
-
-In addition, **include any other important information found in the document**, even if it doesn’t fit under the headings above. The goal is to capture all material details relevant to responding to the opportunity.
-Do **not infer, assume, or fabricate** any content. Only use what is explicitly stated in the documents.
 ---
 
-📊 **Would you like additional insights or a Go/No-Go recommendation for any of these opportunities?**
+### 📄 Document: [Document Name]
 
+#### 🔹 What is This About?
+> A 3–5 sentence **plain-English overview** of the opportunity. Include:
+- Who issued it (organization)
+- What they need / are requesting
+- Why (the business problem or goal)
+- Type of response expected (proposal, quote, info)
+
+---
+
+#### 🧩 Key Opportunity Details
+List all of the following **if available** in the document:
+- **Submission Deadline:** [Date + Time]
+- **Project Start/End Dates:** [Dates or Duration]
+- **Estimated Value / Budget:** [If stated]
+- **Response Format:** (e.g., PDF proposal, online portal, pricing form, etc.)
+- **Delivery Location(s):** [City, Region, Remote, etc.]
+- **Eligibility Requirements:** (Certifications, licenses, location limits)
+- **Scope Summary:** (Bullet points or short paragraph outlining main tasks or deliverables)
+
+---
+
+#### 📊 Evaluation Criteria
+How will responses be scored or selected? Include weighting if provided (e.g., 40% price, 30% experience).
+
+---
+
+#### ⚠️ Notable Risks or Challenges
+Mention anything that could pose a red flag or require clarification (tight timeline, vague scope, legal constraints, strict eligibility).
+
+---
+
+#### 💡 Potential Opportunities or Differentiators
+Highlight anything that could give a competitive edge or present upsell/cross-sell opportunities (e.g., optional services, innovation clauses, incumbent fatigue).
+
+---
+
+#### 📞 Contact & Submission Info
+- **Primary Contact:** Name, title, email, phone (if listed)
+- **Submission Instructions:** Portal, email, physical, etc.
+
+---
+
+### 🤔 Ready for Action?
+> Would you like a strategic assessment or a **Go/No-Go recommendation** for this opportunity?
+
+⚠️ Only summarize what is clearly and explicitly stated. Never guess or infer.
 """
+
 
 @mcp.prompt(title="Step-3 : Go/No-Go Recommendation")
 def Step3_go_no_go_recommendation() -> str:
