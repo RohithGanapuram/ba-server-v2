@@ -1,7 +1,8 @@
-from mcp.server.fastmcp import FastMCP
-import json
-import os
-import sys
+from mcp.server.fastapi import FastAPIApp
+from mcp.transport.sse import SseServer
+from anyio import run
+
+import os, sys, json, logging
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
 from pinecone import Pinecone
@@ -22,9 +23,11 @@ index = pc.Index("sample3")
 embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # Create MCP server
-mcp = FastMCP("Broadaxis-Server-v2" , host="0.0.0.0",  port = 8893)
+# mcp = FastMCP("Broadaxis-Server-v2" , host="0.0.0.0",  port = 8893)
+app = FastAPIApp("Broadaxis-Server-v2")
 
-@mcp.tool()
+
+@app.tool()
 def Broadaxis_knowledge_search(query: str):
     """
     Retrieves the most relevant company's (Broadaxis) information from the internal knowledge base in response to a company related query.
@@ -47,7 +50,7 @@ def Broadaxis_knowledge_search(query: str):
         return json.dumps({"error": f"Knowledge search failed: {str(e)}"})    
  
 
-@mcp.prompt(title="Identifying the Documents")
+@app.prompt(title="Identifying the Documents")
 def Step1_Identifying_documents():
     """read PDFs from filesystem path, categorize them as RFP/RFI/RFQ-related, fillable forms, or non-fillable documents."""
     return f"""read the files from the provided filesystems tool path using PDFFiller tool to categorize each uploaded PDF into the following groups:
@@ -62,7 +65,7 @@ Once the classification is complete:
 If yes, please upload the files and attach the summary prompt template.
 """
 
-@mcp.prompt(title="Step-2: Executive Summary of Procurement Document")
+@app.prompt(title="Step-2: Executive Summary of Procurement Document")
 def Step2_summarize_documents():
     """Generate a clear, high-value summary of uploaded RFP, RFQ, or RFI documents for executive decision-making."""
     return f"""
@@ -122,7 +125,7 @@ Highlight anything that could give a competitive edge or present upsell/cross-se
 """
 
 
-@mcp.prompt(title="Step-3 : Go/No-Go Recommendation")
+@app.prompt(title="Step-3 : Go/No-Go Recommendation")
 def Step3_go_no_go_recommendation() -> str:
     return """
 You are BroadAxis-AI, an assistant trained to evaluate whether BroadAxis should pursue an RFP, RFQ, or RFI opportunity.
@@ -156,7 +159,7 @@ if your recommendation is a Go, list down the things to the user of the tasks he
 
 """
 
-@mcp.prompt(title="Step-4 : Generate Proposal or Capability Statement")
+@app.prompt(title="Step-4 : Generate Proposal or Capability Statement")
 def Step4_generate_capability_statement() -> str:
     return """
 You are BroadAxis-AI, an assistant trained to generate high-quality capability statements and proposal documents for RFP and RFQ responses.
@@ -179,7 +182,7 @@ If this proposal is meant to be saved, offer to generate a PDF or Word version u
 
 """
 
-@mcp.prompt(title="Step-5 : Fill in Missing Information")
+@app.prompt(title="Step-5 : Fill in Missing Information")
 def Step5_fill_missing_information() -> str:
     return """
 You are BroadAxis-AI, an intelligent assistant designed to fill in missing fields using ppdf filler tool , answer RFP/RFQ questions, and complete response templates **strictly using verified information**.
@@ -202,7 +205,7 @@ Only fill what you can verify using Broadaxis_knowledge_search and uploaded cont
 """
 
 
-@mcp.prompt(title="Configure Word Document Formatting")
+@app.prompt(title="Configure Word Document Formatting")
 def configure_word_formatting(
     font: str = "Calibri",
     font_size: int = 11,
@@ -239,6 +242,10 @@ Apply these settings when generating Word documents, including proposals, summar
 """
 
 if __name__ == "__main__":
-    import logging
     logging.basicConfig(level=logging.DEBUG)
-    mcp.run(transport="sse", path="/sse")
+    port = int(os.getenv("PORT", "8893"))  # Render provides PORT
+
+    # Mount BOTH GET /sse (event stream) and POST /sse (JSON-RPC)
+    transport = SseServer(app, path="/sse")
+
+    run(app.run(transport=transport, host="0.0.0.0", port=port))
