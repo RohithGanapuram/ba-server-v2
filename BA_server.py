@@ -1,5 +1,5 @@
-from mcp.server.fastapi import FastAPIApp
-from mcp.transport.sse import SseServer
+from fastmcp import FastAPIApp
+from fastmcp import SseServer
 from anyio import run
 
 import os, sys, json, logging
@@ -25,6 +25,11 @@ embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6
 # Create MCP server
 # mcp = FastMCP("Broadaxis-Server-v2" , host="0.0.0.0",  port = 8893)
 app = FastAPIApp("Broadaxis-Server-v2")
+
+# Add health check endpoint for Render
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "service": "Broadaxis-MCP-Server"}
 
 
 @app.tool()
@@ -241,11 +246,4 @@ def configure_word_formatting(
 Apply these settings when generating Word documents, including proposals, summaries, and responses. Ensure consistency and professionalism throughout the layout.
 """
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    port = int(os.getenv("PORT", "8893"))  # Render provides PORT
-
-    # Mount BOTH GET /sse (event stream) and POST /sse (JSON-RPC)
-    transport = SseServer(app, path="/sse")
-
-    run(app.run(transport=transport, host="0.0.0.0", port=port))
+# Server startup is handled in main.py for Render deployment
