@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.59.0",
+    "fastmcp>=2.11.3",
     "langchain-community>=0.3.27",
     "langchain-huggingface>=0.3.1",
     "mcp[cli]>=1.12.2",
