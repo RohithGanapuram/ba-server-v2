@@ -1,230 +1,246 @@
-from mcp.server import Server
-import os, sys, json, logging
+"""
+Broadaxis MCP Server v2
+
+- Loads Pinecone and HuggingFace embeddings
+- Exposes a semantic search tool over a Pinecone index
+- Provides multi-step prompt templates for RFP/RFQ/RFI workflows
+
+Prereqs (suggested):
+    pip install python-dotenv langchain-huggingface pinecone-client mcp fastmcp
+
+Required env vars:
+    PINECONE_API_KEY
+"""
+
+import json
+import logging
+import os
+import sys
+
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
 from pinecone import Pinecone
-from fastapi import FastAPI
+from mcp.server.fastmcp import FastMCP
 
-# Load environment variables
+
+# -----------------------------
+# Environment & Client Setup
+# -----------------------------
 load_dotenv()
 
-# Validate required environment variables
-required_env_vars = ['PINECONE_API_KEY']
-missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
-if missing_vars:
-    print(f"Error: Missing required environment variables: {', '.join(missing_vars)}", file=sys.stderr)
+REQUIRED_ENV_VARS = ["PINECONE_API_KEY"]
+missing = [v for v in REQUIRED_ENV_VARS if not os.environ.get(v)]
+if missing:
+    print(
+        f"Error: Missing required environment variables: {', '.join(missing)}",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
-# Connection to Pinecone
-pinecone_api_key = os.environ.get('PINECONE_API_KEY')
-pc = Pinecone(api_key=pinecone_api_key)
-index = pc.Index("sample3")
+PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
+
+# Initialize Pinecone client & index
+pc = Pinecone(api_key=PINECONE_API_KEY)
+INDEX_NAME = "sample3"
+index = pc.Index(INDEX_NAME)
+
+# Initialize embeddings
 embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Create MCP server and FastAPI app
-server = Server("Broadaxis-Server-v2")
-app = FastAPI(title="Broadaxis-MCP-Server")
-
-# Add health check endpoint for Render
-@app.get("/health")
-def health_check():
-    return {"status": "healthy", "service": "Broadaxis-MCP-Server"}
-
-# Add MCP endpoints
-@app.post("/mcp")
-async def mcp_endpoint(request: dict):
-    # Handle MCP requests
-    return {"status": "MCP endpoint ready", "server": "Broadaxis-Server-v2"}
-
-@app.get("/mcp")
-async def mcp_info():
-    return {"server": "Broadaxis-Server-v2", "tools": ["Broadaxis_knowledge_search"], "prompts": ["Step1_Identifying_documents", "Step2_summarize_documents", "Step3_go_no_go_recommendation", "Step4_generate_capability_statement", "Step5_fill_missing_information", "configure_word_formatting"]}
-
-@app.post("/search")
-async def knowledge_search(query: str):
-    """Direct endpoint for knowledge search"""
-    return Broadaxis_knowledge_search(query)
+# Create MCP server
+mcp = FastMCP("Broadaxis-Server-v2", host="0.0.0.0", port=8895)
 
 
-@server.tool()
+# -----------------------------
+# Tools
+# -----------------------------
+@mcp.tool()
 def Broadaxis_knowledge_search(query: str):
     """
-    Retrieves the most relevant company's (Broadaxis) information from the internal knowledge base in response to a company related query.
-    This tool performs semantic search over a RAG-powered database containing details about Broadaxis's background, team, projects, responsibilities, and domain expertise. It is designed to support tasks such as retrieving the knowledge regarding the company, surfacing domain-specific experience.
+    Retrieves the most relevant Broadaxis information from the internal knowledge base
+    in response to a company-related query.
+
+    This tool performs semantic search over a RAG-powered database containing details
+    about Broadaxis's background, team, projects, responsibilities, and domain expertise.
 
     Args:
-        query: A natural language request related to the company’s past work, expertise, or capabilities (e.g., "What are the team's responsibilities?").
+        query: Natural language request related to the company’s past work, expertise, or capabilities.
+               (e.g., "What are the team's responsibilities?")
+
+    Returns:
+        List[str]: Top matching document texts, or a JSON error string on failure.
     """
     try:
-        query_embedding = embedder.embed_documents([query])[0]
+        # Prefer embed_query for a single query string
+        query_embedding = embedder.embed_query(query)
+
+        # Pinecone expects a 1D vector for 'vector'
         query_result = index.query(
-            vector=[query_embedding],
+            vector=query_embedding,
             top_k=5,
             include_metadata=True,
-            namespace=""
+            namespace="",  # set if you use namespacing
         )
-        documents = [result['metadata']['text'] for result in query_result['matches']]
+
+        matches = query_result.get("matches", []) or []
+        documents = []
+        for m in matches:
+            meta = m.get("metadata", {}) or {}
+            # Adjust the key name below if your metadata uses a different field
+            text = meta.get("text")
+            if text:
+                documents.append(text)
+
         return documents
+
     except Exception as e:
-        return json.dumps({"error": f"Knowledge search failed: {str(e)}"})    
- 
+        return json.dumps({"error": f"Knowledge search failed: {str(e)}"})
 
-@server.prompt(title="Identifying the Documents")
+
+# -----------------------------
+# Prompt Templates
+# -----------------------------
+@mcp.prompt(title="Identifying the Documents")
 def Step1_Identifying_documents():
-    """read PDFs from filesystem path, categorize them as RFP/RFI/RFQ-related, fillable forms, or non-fillable documents."""
-    return f"""read the files from the provided filesystems tool path using PDFFiller tool to categorize each uploaded PDF into the following groups:
+    """
+    Read PDFs from filesystem path, categorize them as RFP/RFI/RFQ-related,
+    fillable forms, or non-fillable documents.
+    """
+    return (
+        "read the files from the provided filesystems tool path using PDFFiller tool to "
+        "categorize each uploaded PDF into the following groups:\n"
+        "1. 📘 **Primary Documents** — PDFs that contain RFP, RFQ, or RFI content "
+        "(e.g., project scope, requirements, evaluation criteria).\n"
+        "2. 📝 **Fillable Forms** — PDFs with interactive fields intended for user input "
+        "(e.g., pricing tables, response forms).\n"
+        "3. 📄 **Non-Fillable Documents** — PDFs that are neither RFP-type nor interactive, "
+        "such as attachments or informational appendices.\n"
+        "---\n"
+        "Once the classification is complete:\n"
+        "📊 **Would you like to proceed to the next step and generate summaries for the relevant documents?** "
+        "If yes, please upload the files and attach the summary prompt template."
+    )
 
-1. 📘 **Primary Documents** — PDFs that contain RFP, RFQ, or RFI content (e.g., project scope, requirements, evaluation criteria).
-2. 📝 **Fillable Forms** — PDFs with interactive fields intended for user input (e.g., pricing tables, response forms).
-3. 📄 **Non-Fillable Documents** — PDFs that are neither RFP-type nor interactive, such as attachments or informational appendices.
----
-Once the classification is complete:
 
-📊 **Would you like to proceed to the next step and generate summaries for the relevant documents?**  
-If yes, please upload the files and attach the summary prompt template.
-"""
-
-@server.prompt(title="Step-2: Executive Summary of Procurement Document")
+@mcp.prompt(title="Step-2: Executive Summary of Procurement Document")
 def Step2_summarize_documents():
-    """Generate a clear, high-value summary of uploaded RFP, RFQ, or RFI documents for executive decision-making."""
-    return f"""
-You are **BroadAxis-AI**, an intelligent assistant that analyzes procurement documents (RFP, RFQ, RFI) to help vendor teams quickly understand the opportunity and make informed pursuit decisions.
-When a user uploads one or more documents, do the following **for each document, one at a time**:
-
----
-
-### 📄 Document: [Document Name]
-
-#### 🔹 What is This About?
-> A 3–5 sentence **plain-English overview** of the opportunity. Include:
-- Who issued it (organization)
-- What they need / are requesting
-- Why (the business problem or goal)
-- Type of response expected (proposal, quote, info)
-
----
-
-#### 🧩 Key Opportunity Details
-List all of the following **if available** in the document:
-- **Submission Deadline:** [Date + Time]
-- **Project Start/End Dates:** [Dates or Duration]
-- **Estimated Value / Budget:** [If stated]
-- **Response Format:** (e.g., PDF proposal, online portal, pricing form, etc.)
-- **Delivery Location(s):** [City, Region, Remote, etc.]
-- **Eligibility Requirements:** (Certifications, licenses, location limits)
-- **Scope Summary:** (Bullet points or short paragraph outlining main tasks or deliverables)
-
----
-
-#### 📊 Evaluation Criteria
-How will responses be scored or selected? Include weighting if provided (e.g., 40% price, 30% experience).
-
----
-
-#### ⚠️ Notable Risks or Challenges
-Mention anything that could pose a red flag or require clarification (tight timeline, vague scope, legal constraints, strict eligibility).
-
----
-
-#### 💡 Potential Opportunities or Differentiators
-Highlight anything that could give a competitive edge or present upsell/cross-sell opportunities (e.g., optional services, innovation clauses, incumbent fatigue).
-
----
-
-#### 📞 Contact & Submission Info
-- **Primary Contact:** Name, title, email, phone (if listed)
-- **Submission Instructions:** Portal, email, physical, etc.
-
----
-
-### 🤔 Ready for Action?
-> Would you like a strategic assessment or a **Go/No-Go recommendation** for this opportunity?
-
-⚠️ Only summarize what is clearly and explicitly stated. Never guess or infer.
-"""
+    """
+    Generate a clear, high-value summary of uploaded RFP, RFQ, or RFI documents
+    for executive decision-making.
+    """
+    return (
+        "You are **BroadAxis-AI**, an intelligent assistant that analyzes procurement documents (RFP, RFQ, RFI) "
+        "to help vendor teams quickly understand the opportunity and make informed pursuit decisions.\n"
+        "When a user uploads one or more documents, do the following **for each document, one at a time**:\n"
+        "---\n"
+        "### 📄 Document: [Document Name]\n"
+        "#### 🔹 What is This About?\n"
+        "> A 3–5 sentence **plain-English overview** of the opportunity. Include:\n"
+        "- Who issued it (organization)\n"
+        "- What they need / are requesting\n"
+        "- Why (the business problem or goal)\n"
+        "- Type of response expected (proposal, quote, info)\n"
+        "---\n"
+        "#### 🧩 Key Opportunity Details\n"
+        "List all of the following **if available** in the document:\n"
+        "- **Submission Deadline:** [Date + Time]\n"
+        "- **Project Start/End Dates:** [Dates or Duration]\n"
+        "- **Estimated Value / Budget:** [If stated]\n"
+        "- **Response Format:** (e.g., PDF proposal, online portal, pricing form, etc.)\n"
+        "- **Delivery Location(s):** [City, Region, Remote, etc.]\n"
+        "- **Eligibility Requirements:** (Certifications, licenses, location limits)\n"
+        "- **Scope Summary:** (Bullet points or short paragraph outlining main tasks or deliverables)\n"
+        "---\n"
+        "#### 📊 Evaluation Criteria\n"
+        "How will responses be scored or selected? Include weighting if provided (e.g., 40% price, 30% experience).\n"
+        "---\n"
+        "#### ⚠️ Notable Risks or Challenges\n"
+        "Mention anything that could pose a red flag or require clarification (tight timeline, vague scope, "
+        "legal constraints, strict eligibility).\n"
+        "---\n"
+        "#### 💡 Potential Opportunities or Differentiators\n"
+        "Highlight anything that could give a competitive edge or present upsell/cross-sell opportunities "
+        "(e.g., optional services, innovation clauses, incumbent fatigue).\n"
+        "---\n"
+        "#### 📞 Contact & Submission Info\n"
+        "- **Primary Contact:** Name, title, email, phone (if listed)\n"
+        "- **Submission Instructions:** Portal, email, physical, etc.\n"
+        "---\n"
+        "### 🤔 Ready for Action?\n"
+        "> Would you like a strategic assessment or a **Go/No-Go recommendation** for this opportunity?\n"
+        "⚠️ Only summarize what is clearly and explicitly stated. Never guess or infer."
+    )
 
 
-@server.prompt(title="Step-3 : Go/No-Go Recommendation")
+@mcp.prompt(title="Step-3 : Go/No-Go Recommendation")
 def Step3_go_no_go_recommendation() -> str:
-    return """
-You are BroadAxis-AI, an assistant trained to evaluate whether BroadAxis should pursue an RFP, RFQ, or RFI opportunity.
-The user has uploaded one or more opportunity documents. You have already summarized them/if not ask for the user to upload RFP/RFI/RF documents and generate summary.
-Now perform a structured **Go/No-Go analysis** using the following steps:
----
-### 🧠 Step-by-Step Evaluation Framework
+    return (
+        "You are BroadAxis-AI, an assistant trained to evaluate whether BroadAxis should pursue an RFP, RFQ, or RFI opportunity. "
+        "The user has uploaded one or more opportunity documents. You have already summarized them/if not ask for the user to "
+        "upload RFP/RFI/RF documents and generate summary. Now perform a structured **Go/No-Go analysis** using the following steps:\n"
+        "---\n"
+        "### 🧠 Step-by-Step Evaluation Framework\n"
+        "1. **Review the RFP Requirements**\n"
+        "- Highlight the most critical needs and evaluation criteria.\n"
+        "2. **Search Internal Knowledge** (via Broadaxis_knowledge_search)\n"
+        "- Identify relevant past projects\n"
+        "- Retrieve proof of experience in similar domains\n"
+        "- Surface known strengths or capability gaps\n"
+        "3. **Evaluate Capability Alignment**\n"
+        "- Estimate percentage match (e.g., \"BroadAxis meets ~85% of the requirements\")\n"
+        "- Note any missing capabilities or unclear requirements\n"
+        "4. **Assess Resource Requirements**\n"
+        "- Are there any specialized skills, timelines, or staffing needs?\n"
+        "- Does BroadAxis have the necessary team or partners?\n"
+        "5. **Evaluate Competitive Positioning**\n"
+        "- Based on known experience and domain, would BroadAxis be competitive?\n"
+        "Use only verified internal information (via Broadaxis_knowledge_search) and the uploaded documents. Do not guess or hallucinate capabilities. "
+        "If information is missing, clearly state what else is needed for a confident decision.\n"
+        "if your recommendation is a Go, list down the things to the user of the tasks he need to complete to finish the submission of RFP/RFI/RFQ."
+    )
 
-1. **Review the RFP Requirements**
-   - Highlight the most critical needs and evaluation criteria.
 
-2. **Search Internal Knowledge** (via Broadaxis_knowledge_search)
-   - Identify relevant past projects
-   - Retrieve proof of experience in similar domains
-   - Surface known strengths or capability gaps
-
-3. **Evaluate Capability Alignment**
-   - Estimate percentage match (e.g., "BroadAxis meets ~85% of the requirements")
-   - Note any missing capabilities or unclear requirements
-
-4. **Assess Resource Requirements**
-   - Are there any specialized skills, timelines, or staffing needs?
-   - Does BroadAxis have the necessary team or partners?
-
-5. **Evaluate Competitive Positioning**
-   - Based on known experience and domain, would BroadAxis be competitive?
-
-Use only verified internal information (via Broadaxis_knowledge_search) and the uploaded documents.
-Do not guess or hallucinate capabilities. If information is missing, clearly state what else is needed for a confident decision.
-if your recommendation is a Go, list down the things to the user of the tasks he need to complete  to finish the submission of RFP/RFI/RFQ. 
-
-"""
-
-@server.prompt(title="Step-4 : Generate Proposal or Capability Statement")
+@mcp.prompt(title="Step-4 : Generate Proposal or Capability Statement")
 def Step4_generate_capability_statement() -> str:
-    return """
-You are BroadAxis-AI, an assistant trained to generate high-quality capability statements and proposal documents for RFP and RFQ responses.
-The user has either uploaded an opportunity document or requested a formal proposal. Use all available information from:
+    return (
+        "You are BroadAxis-AI, an assistant trained to generate high-quality capability statements and proposal documents for RFP and RFQ responses. "
+        "The user has either uploaded an opportunity document or requested a formal proposal.\n"
+        "Use all available information from:\n"
+        "- Uploaded documents (RFP/RFQ)\n"
+        "- Internal knowledge (via Broadaxis_knowledge_search)\n"
+        "- Prior summaries or analyses already provided\n"
+        "---\n"
+        "### 🧠 Instructions\n"
+        "- Do not invent names, projects, or facts.\n"
+        "- Use Broadaxis_knowledge_search to populate all relevant content.\n"
+        "- Leave placeholders where personal or business info is not available.\n"
+        "- Maintain professional, confident, and compliant tone.\n"
+        "If this proposal is meant to be saved, offer to generate a PDF or Word version using the appropriate tool."
+    )
 
-- Uploaded documents (RFP/RFQ)
-- Internal knowledge (via Broadaxis_knowledge_search)
-- Prior summaries or analyses already provided
 
----
-
-### 🧠 Instructions
-
-- Do not invent names, projects, or facts.
-- Use Broadaxis_knowledge_search to populate all relevant content.
-- Leave placeholders where personal or business info is not available.
-- Maintain professional, confident, and compliant tone.
-
-If this proposal is meant to be saved, offer to generate a PDF or Word version using the appropriate tool.
-
-"""
-
-@server.prompt(title="Step-5 : Fill in Missing Information")
+@mcp.prompt(title="Step-5 : Fill in Missing Information")
 def Step5_fill_missing_information() -> str:
-    return """
-You are BroadAxis-AI, an intelligent assistant designed to fill in missing fields using ppdf filler tool , answer RFP/RFQ questions, and complete response templates **strictly using verified information**.
- Your task is to **complete the missing sections** on the fillable documents which you have identified previously with reliable information from:
-
-1. Broadaxis_knowledge_search (internal database)
-2. The uploaded document itself
-3. Prior chat context (if available)
----
-### 🧠 RULES (Strict Compliance)
-
-- ❌ **DO NOT invent or hallucinate** company details, financials, certifications, team names, or client info.
-- ❌ **DO NOT guess** values you cannot verify.
-- 🔐 If the question involves **personal, legal, or confidential information**, **do not fill it**.
-- ✅ Use internal knowledge only when it clearly answers the field.
----
-### ✅ Final Instruction
-Only fill what you can verify using Broadaxis_knowledge_search and uploaded content. Leave everything else with clear, professional placeholders.
-
-"""
+    return (
+        "You are BroadAxis-AI, an intelligent assistant designed to fill in missing fields using ppdf filler tool , answer RFP/RFQ questions, "
+        "and complete response templates **strictly using verified information**. Your task is to **complete the missing sections** on the fillable "
+        "documents which you have identified previously with reliable information from:\n"
+        "1. Broadaxis_knowledge_search (internal database)\n"
+        "2. The uploaded document itself\n"
+        "3. Prior chat context (if available)\n"
+        "---\n"
+        "### 🧠 RULES (Strict Compliance)\n"
+        "- ❌ **DO NOT invent or hallucinate** company details, financials, certifications, team names, or client info.\n"
+        "- ❌ **DO NOT guess** values you cannot verify.\n"
+        "- 🔐 If the question involves **personal, legal, or confidential information**, **do not fill it**.\n"
+        "- ✅ Use internal knowledge only when it clearly answers the field.\n"
+        "---\n"
+        "### ✅ Final Instruction\n"
+        "Only fill what you can verify using Broadaxis_knowledge_search and uploaded content. Leave everything else with clear, professional placeholders."
+    )
 
 
-@server.prompt(title="Configure Word Document Formatting")
+@mcp.prompt(title="Configure Word Document Formatting")
 def configure_word_formatting(
     font: str = "Calibri",
     font_size: int = 11,
@@ -235,29 +251,33 @@ def configure_word_formatting(
     margin_bottom: str = "1 inch",
     margin_left: str = "1 inch",
     margin_right: str = "1 inch",
-    page_orientation: str = "portrait"
+    page_orientation: str = "portrait",
 ) -> str:
     """
-    Prompt to configure Word document formatting settings.
-    Users can override any of the default values.
+    Prompt to configure Word document formatting settings. Users can override any of the default values.
     """
-    return f"""Please use the following Word document formatting settings:
+    return (
+        "Please use the following Word document formatting settings:\n"
+        "### 📝 Formatting Instructions\n"
+        f"- **Font**: {font}\n"
+        f"- **Font Size**: {font_size} pt\n"
+        f"- **Heading Font Size**: {heading_font_size} pt\n"
+        f"- **Heading Bold**: {'Yes' if heading_bold else 'No'}\n"
+        f"- **Line Spacing**: {line_spacing}\n"
+        "- **Margins**:\n"
+        f"  - Top: {margin_top}\n"
+        f"  - Bottom: {margin_bottom}\n"
+        f"  - Left: {margin_left}\n"
+        f"  - Right: {margin_right}\n"
+        f"- **Page Orientation**: {page_orientation.capitalize()}\n"
+        "Apply these settings when generating Word documents, including proposals, summaries, and responses. "
+        "Ensure consistency and professionalism throughout the layout."
+    )
 
-### 📝 Formatting Instructions
 
-- **Font**: {font}
-- **Font Size**: {font_size} pt
-- **Heading Font Size**: {heading_font_size} pt
-- **Heading Bold**: {"Yes" if heading_bold else "No"}
-- **Line Spacing**: {line_spacing}
-- **Margins**:
-  - Top: {margin_top}
-  - Bottom: {margin_bottom}
-  - Left: {margin_left}
-  - Right: {margin_right}
-- **Page Orientation**: {page_orientation.capitalize()}
-
-Apply these settings when generating Word documents, including proposals, summaries, and responses. Ensure consistency and professionalism throughout the layout.
-"""
-
-# Server startup is handled in main.py for Render deployment
+# -----------------------------
+# Entrypoint
+# -----------------------------
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    mcp.run(transport="sse")
